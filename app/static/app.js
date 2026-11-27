@@ -8,7 +8,10 @@ const TONE_COLOR = {
   shower: "#7f93ad", rain: "#4f6280", storm: "#2b3449",
 };
 
-const state = { weather: null, portfolio: null, order: null, side: "buy" };
+const state = { weathers: {}, market: "KR", portfolio: null, order: null, side: "buy" };
+try { if (localStorage.getItem("mkt") === "US") state.market = "US"; } catch (e) {}
+const usd = (n) => "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const px = (q) => (q.currency === "USD" ? usd(q.price) : `${won(q.price)}원`);
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -56,33 +59,47 @@ function paintSky(key) {
 }
 
 // ---------- 날씨 화면 ----------
-async function loadWeather() {
+async function loadWeather(m = state.market) {
   try {
-    const w = await api("/api/weather");
-    state.weather = w;
-    renderWeather(w);
+    const w = await api(`/api/weather?m=${m}`);
+    state.weathers[m] = w;
+    if (m === state.market) renderWeather(w);
+    if (state.portfolio) renderWallet();
   } catch (e) {
-    $("#updated").textContent = "날씨를 못 불러왔어요";
+    if (m === state.market) $("#updated").textContent = "날씨를 못 불러왔어요";
   }
 }
 
+function setMarket(m) {
+  state.market = m;
+  try { localStorage.setItem("mkt", m); } catch (e) {}
+  document.querySelectorAll("#mkt button").forEach((b) => b.classList.toggle("active", b.dataset.m === m));
+  if (state.weathers[m]) renderWeather(state.weathers[m]);
+  loadWeather(m);
+}
+$("#mkt").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (b) setMarket(b.dataset.m);
+});
+
 function renderWeather(w) {
-  const kospi = w.indices.find((i) => i.code === "KOSPI") || w.indices[0];
-  if (kospi) {
-    paintSky(kospi.weather.key);
+  const main = w.indices[0];
+  if (main) {
+    paintSky(main.weather.key);
     $("#hero").innerHTML = `
-      <div class="hero-emoji">${kospi.weather.emoji}</div>
+      <div class="hero-emoji">${main.weather.emoji}</div>
       <div class="hero-text">
-        <div class="hero-title">오늘 코스피는</div>
-        <div class="hero-big">${kospi.weather.label}</div>
-        <div class="hero-line">${kospi.weather.line}</div>
+        <div class="hero-title">오늘 ${main.name} 하늘</div>
+        <div class="hero-big">${main.weather.label}</div>
+        <div class="hero-line">${main.weather.line}</div>
       </div>`;
   }
+  $("#indices").style.gridTemplateColumns = `repeat(${w.indices.length}, 1fr)`;
   $("#indices").innerHTML = w.indices.map((i) => `
     <div class="index-card">
       <div class="nm"><span>${i.name}</span><span>${i.weather.emoji}</span></div>
-      <div class="px">${i.price.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}</div>
-      <div class="ch ${tone(i.change_pct)}">${Math.abs(i.change).toFixed(2)} (${sign(i.change_pct)}%)</div>
+      <div class="px">${i.price.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+      <div class="ch ${tone(i.change_pct)}">${w.indices.length > 2 ? "" : Math.abs(i.change).toFixed(2) + " "}(${sign(i.change_pct)}%)</div>
     </div>`).join("");
   const t = new Date(w.updated_at);
   $("#updated").textContent = `${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")} 기준${w.source === "demo" ? " · 연습용" : ""}`;
@@ -95,6 +112,9 @@ function renderWeather(w) {
       <div class="meta"><b class="${tone(s.change_pct)}">${sign(s.change_pct)}%</b><span>강수확률 ${s.rain_chance}%</span></div>
     </button>`).join("");
   $("#legend").innerHTML = "☀️ 쨍쨍 · 🌤️ 맑음 · ⛅ 구름 조금 · ☁️ 흐림 · 🌦️ 소나기 · 🌧️ 비 · ⛈️ 천둥번개<br>강수확률 = 그 업종에서 오늘 내린 종목 비율";
+  $("#fx-note").innerHTML = w.market === "US"
+    ? `환율 1달러 = ${won(w.fx.usdkrw)}원${w.fx.source === "demo" ? " (연습용)" : ""} · 내 지갑은 원화로 계산해요<br>미국 장은 한국 시간 밤 11:30 ~ 새벽 6시 (서머타임엔 1시간 빨라요)`
+    : "국내 장은 오전 9시 ~ 오후 3시 30분이에요";
   if (state.openSector) renderSector(state.openSector);
 }
 
@@ -107,7 +127,7 @@ $("#sectors").addEventListener("click", (e) => {
 });
 
 function renderSector(id) {
-  const s = state.weather?.sectors.find((x) => x.id === id);
+  const s = state.weathers[state.market]?.sectors.find((x) => x.id === id);
   if (!s) return;
   $("#sector-head").innerHTML = `
     <div class="big">${s.weather.emoji}</div>
@@ -117,8 +137,9 @@ function renderSector(id) {
       <div class="ic">${q.weather.emoji}</div>
       <div class="main"><div class="t1">${q.name}</div><div class="t2">${q.code}</div></div>
       <div class="right">
-        <div class="p1">${won(q.price)}원</div>
+        <div class="p1">${px(q)}</div>
         <div class="p2 ${tone(q.change_pct)}">${sign(q.change_pct)}%</div>
+        ${q.currency === "USD" ? `<div class="krw">≈ ${won(q.price_krw)}원</div>` : ""}
       </div>
     </button>`).join("");
 }
@@ -130,9 +151,11 @@ $("#sector-stocks").addEventListener("click", (e) => {
 
 // ---------- 주문 ----------
 function findQuote(code) {
-  for (const s of state.weather?.sectors || []) {
-    const q = s.stocks.find((x) => x.code === code);
-    if (q) return q;
+  for (const w of Object.values(state.weathers)) {
+    for (const s of w.sectors) {
+      const q = s.stocks.find((x) => x.code === code);
+      if (q) return q;
+    }
   }
   return null;
 }
@@ -158,7 +181,7 @@ function setSide(side) {
 function maxQty() {
   const q = state.order;
   if (!q) return 0;
-  if (state.side === "buy") return Math.floor((state.portfolio?.cash || 0) / (q.price * 1.00015));
+  if (state.side === "buy") return Math.floor((state.portfolio?.cash || 0) / (q.price_krw * 1.00015));
   return held(q.code)?.qty || 0;
 }
 
@@ -168,10 +191,11 @@ function renderOrder() {
   const h = held(q.code);
   $("#order-head").innerHTML = `
     <h3>${q.weather.emoji} ${q.name}</h3>
-    <div class="px">${won(q.price)}원 <span class="${tone(q.change_pct)}" style="font-size:15px">${sign(q.change_pct)}%</span></div>
+    <div class="px">${px(q)} <span class="${tone(q.change_pct)}" style="font-size:15px">${sign(q.change_pct)}%</span></div>
+    ${q.currency === "USD" ? `<div class="hold">1주 ≈ ${won(q.price_krw)}원 (환율 적용)</div>` : ""}
     <div class="hold">${h ? `보유 ${won(h.qty)}주 · 평균 ${won(h.avg_price)}원` : "아직 갖고 있지 않아요"}</div>`;
   const qty = Math.max(0, parseInt($("#qty").value || "0", 10));
-  const amount = qty * q.price;
+  const amount = qty * q.price_krw;
   $("#order-info").innerHTML = `
     주문 금액 <b>${won(amount)}원</b><br>
     ${state.side === "buy" ? `내 현금 <b>${won(state.portfolio?.cash || 0)}원</b>` : `팔 수 있는 수량 <b>${won(h?.qty || 0)}주</b>`}
@@ -255,7 +279,7 @@ function renderWallet() {
     ? p.holdings.map((h) => `
       <button class="item" data-code="${h.code}">
         <div class="ic">${findQuote(h.code)?.weather.emoji || "📈"}</div>
-        <div class="main"><div class="t1">${h.name}</div><div class="t2">${won(h.qty)}주 · 평균 ${won(h.avg_price)}원</div></div>
+        <div class="main"><div class="t1">${h.market === "US" ? "🇺🇸 " : ""}${h.name}</div><div class="t2">${won(h.qty)}주 · 평균 ${won(h.avg_price)}원${h.currency === "USD" && h.native_price ? ` · 지금 ${usd(h.native_price)}` : ""}</div></div>
         <div class="right">
           <div class="p1">${won(h.value)}원</div>
           <div class="p2 ${tone(h.pnl)}">${h.pnl >= 0 ? "+" : ""}${won(h.pnl)} (${sign(h.pnl_pct)}%)</div>
@@ -280,6 +304,7 @@ $("#holdings").addEventListener("click", (e) => {
   const it = e.target.closest(".item");
   if (it) openOrder(it.dataset.code, "sell");
 });
+// 주문 시트는 지금 보고 있는 시장과 상관없이 열려요 (findQuote가 두 시장을 다 찾아요).
 
 $("#reset-btn").addEventListener("click", async () => {
   if (!confirm("모든 기록을 지우고 1,000만 원으로 다시 시작할까요?")) return;
@@ -311,6 +336,7 @@ document.querySelectorAll(".sheet-wrap").forEach((w) => w.addEventListener("clic
 }));
 
 // ---------- 시작 ----------
-loadWeather();
+setMarket(state.market);
+loadWeather(state.market === "KR" ? "US" : "KR");
 loadPortfolio();
-setInterval(loadWeather, 60_000);
+setInterval(() => loadWeather(state.market), 60_000);

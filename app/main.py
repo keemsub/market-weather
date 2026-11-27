@@ -15,7 +15,15 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.coach import Coach, find_facts, make_llm
 from app.config import get_settings
 from app.db import Account, Trade, get_db
-from app.market import SECTOR_OF, DemoQuotes, MarketData, NaverQuotes, forecast
+from app.market import (
+    MARKETS,
+    SECTOR_OF,
+    DemoQuotes,
+    MarketData,
+    NaverQuotes,
+    YahooQuotes,
+    forecast,
+)
 from app.portfolio import TradeError, execute, summary, trades_of
 
 BASE_DIR = Path(__file__).parent
@@ -37,8 +45,10 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 @lru_cache
 def get_market() -> MarketData:
     s = get_settings()
-    primary = DemoQuotes() if s.market_source == "demo" else NaverQuotes()
-    return MarketData(primary, cache_seconds=s.quote_cache_seconds)
+    if s.market_source == "demo":
+        return MarketData({"KR": DemoQuotes(), "US": DemoQuotes()}, s.quote_cache_seconds)
+    yahoo = YahooQuotes()
+    return MarketData({"KR": NaverQuotes(), "US": yahoo}, s.quote_cache_seconds, fx_provider=yahoo)
 
 
 @lru_cache
@@ -75,8 +85,8 @@ def health():
 
 
 @app.get("/api/weather")
-def weather(market: Market):
-    return forecast(market.snapshot())
+def weather(market: Market, m: str = "KR"):
+    return forecast(market.snapshot(), m if m in MARKETS else "KR")
 
 
 @app.get("/api/portfolio")
@@ -88,7 +98,7 @@ def portfolio(db: DB, me: Me, market: Market):
 
 
 class TradeIn(BaseModel):
-    code: str = Field(min_length=6, max_length=6)
+    code: str = Field(min_length=1, max_length=12)
     side: Literal["buy", "sell"]
     qty: int = Field(gt=0, le=1_000_000)
 
@@ -106,8 +116,8 @@ def trade(body: TradeIn, db: DB, me: Me, market: Market):
         raise HTTPException(400, str(e)) from e
 
     history = trades_of(db, me)
-    fc = forecast(snap)
     sector = SECTOR_OF.get(body.code)
+    fc = forecast(snap, sector.market if sector else "KR")
     sector_pct = next(
         (s["change_pct"] for s in fc["sectors"] if sector and s["id"] == sector.id), None
     )
@@ -123,6 +133,7 @@ def trade(body: TradeIn, db: DB, me: Me, market: Market):
     data = summary(me, trades_of(db, me), snap["stocks"], get_settings().starting_cash)
     return {
         "trade": {"id": t.id, "name": t.name, "side": t.side, "qty": t.qty, "price": t.price},
+        "fx": snap["fx"],
         "coach": {"text": t.coach, "source": t.coach_source},
         "portfolio": data,
     }
