@@ -144,7 +144,7 @@ def find_facts(
     # 쏠림 (매매 직후 기준)
     holds = holdings_from(history)
     values = {
-        c: h.qty * (quotes[c].price if c in quotes else h.avg_price) for c, h in holds.items()
+        c: h.qty * (quotes[c].price_krw if c in quotes else h.avg_price) for c, h in holds.items()
     }
     total = cash + sum(values.values())
     if total > 0 and values:

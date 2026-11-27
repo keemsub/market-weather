@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#5aa9e6">
+  <meta name="theme-color" content="#0b1020">
   <title>시장 날씨</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌤️</text></svg>">
   <link rel="stylesheet" href="/static/style.css">
@@ -16,7 +16,13 @@
         <div class="sky-fx" aria-hidden="true"></div>
         <div class="sky-top">
           <span class="brand">시장 날씨</span>
-          <span class="updated" id="updated">불러오는 중…</span>
+          <div class="right">
+            <div class="mkt" id="mkt">
+              <button data-m="KR" class="active">🇰🇷 국내</button>
+              <button data-m="US">🇺🇸 미국</button>
+            </div>
+            <span class="updated" id="updated">불러오는 중…</span>
+          </div>
         </div>
         <div class="hero" id="hero">
           <div class="hero-emoji">⏳</div>
@@ -33,6 +39,7 @@
       <h2 class="section-title">업종별 예보 <small>칸을 누르면 종목이 나와요</small></h2>
       <div class="grid" id="sectors"></div>
       <p class="legend" id="legend"></p>
+      <p class="fx-note" id="fx-note"></p>
     </section>
 
     <!-- 내 지갑 -->

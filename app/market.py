@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import random
 import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -25,7 +27,7 @@ KST = timezone(timedelta(hours=9))
 class Stock:
     code: str
     name: str
-    base_price: int  # 데모 시세의 출발점 (실제 시세와 다를 수 있어요)
+    base_price: float  # 데모 시세의 출발점 (실제 시세와 다를 수 있어요)
 
 
 @dataclass(frozen=True)
@@ -34,9 +36,10 @@ class Sector:
     name: str
     icon: str
     stocks: tuple[Stock, ...]
+    market: str = "KR"  # KR 국내 / US 미국
 
 
-SECTORS: tuple[Sector, ...] = (
+KR_SECTORS: tuple[Sector, ...] = (
     Sector(
         "semi",
         "반도체",
@@ -126,7 +129,110 @@ SECTORS: tuple[Sector, ...] = (
     ),
 )
 
-INDICES = (("KOSPI", "코스피", 2600.0), ("KOSDAQ", "코스닥", 750.0))
+US_SECTORS: tuple[Sector, ...] = tuple(
+    Sector(sid, name, icon, tuple(Stock(c, n, p) for c, n, p in stocks), "US")
+    for sid, name, icon, stocks in (
+        (
+            "us-bigtech",
+            "빅테크",
+            "💻",
+            (
+                ("AAPL", "애플", 230),
+                ("MSFT", "마이크로소프트", 420),
+                ("GOOGL", "알파벳(구글)", 175),
+                ("AMZN", "아마존", 200),
+                ("META", "메타", 580),
+            ),
+        ),
+        (
+            "us-semi",
+            "반도체",
+            "💾",
+            (
+                ("NVDA", "엔비디아", 140),
+                ("AMD", "AMD", 150),
+                ("AVGO", "브로드컴", 170),
+                ("TSM", "TSMC", 190),
+            ),
+        ),
+        (
+            "us-ev",
+            "전기차·모빌리티",
+            "🚗",
+            (
+                ("TSLA", "테슬라", 300),
+                ("RIVN", "리비안", 12),
+                ("UBER", "우버", 75),
+            ),
+        ),
+        (
+            "us-finance",
+            "금융",
+            "🏦",
+            (
+                ("JPM", "JP모건", 230),
+                ("BAC", "뱅크오브아메리카", 45),
+                ("GS", "골드만삭스", 550),
+                ("V", "비자", 300),
+            ),
+        ),
+        (
+            "us-health",
+            "헬스케어",
+            "💊",
+            (
+                ("LLY", "일라이릴리", 800),
+                ("JNJ", "존슨앤드존슨", 155),
+                ("UNH", "유나이티드헬스", 550),
+                ("PFE", "화이자", 26),
+            ),
+        ),
+        (
+            "us-consumer",
+            "소비재",
+            "🛒",
+            (
+                ("KO", "코카콜라", 65),
+                ("COST", "코스트코", 900),
+                ("WMT", "월마트", 85),
+                ("MCD", "맥도날드", 290),
+            ),
+        ),
+        (
+            "us-energy",
+            "에너지",
+            "🛢️",
+            (
+                ("XOM", "엑슨모빌", 115),
+                ("CVX", "셰브론", 150),
+            ),
+        ),
+        (
+            "us-media",
+            "엔터·미디어",
+            "🎬",
+            (
+                ("NFLX", "넷플릭스", 800),
+                ("DIS", "디즈니", 110),
+                ("SPOT", "스포티파이", 450),
+            ),
+        ),
+    )
+)
+
+SECTORS: tuple[Sector, ...] = KR_SECTORS + US_SECTORS
+
+# (코드, 이름, 데모용 기준값, 시장)
+INDICES = (
+    ("KOSPI", "코스피", 2600.0, "KR"),
+    ("KOSDAQ", "코스닥", 750.0, "KR"),
+    ("^GSPC", "S&P 500", 5900.0, "US"),
+    ("^IXIC", "나스닥", 19000.0, "US"),
+    ("^DJI", "다우존스", 44000.0, "US"),
+)
+MARKETS = {"KR": "국내", "US": "미국"}
+FX_CODE = "KRW=X"  # 1달러 = 몇 원
+DEMO_FX = 1400.0
 
 STOCKS: dict[str, Stock] = {s.code: s for sec in SECTORS for s in sec.stocks}
 SECTOR_OF: dict[str, Sector] = {s.code: sec for sec in SECTORS for s in sec.stocks}
@@ -169,16 +275,22 @@ def weather_for(change_pct: float) -> Weather:
 class Quote:
     code: str
     name: str
-    price: float
-    change: float  # 전일 대비 (원 / 포인트)
+    price: float  # 그 나라 돈 기준 (국내 원, 미국 달러)
+    change: float  # 전일 대비 (원·달러 / 포인트)
     change_pct: float  # 전일 대비 (%)
+    currency: str = "KRW"
+    price_krw: float = 0.0  # 원화로 바꾼 1주 가격 (모의투자 계산용)
+
+    def __post_init__(self) -> None:
+        if not self.price_krw and self.currency == "KRW":
+            self.price_krw = self.price
 
 
 class QuoteProvider(Protocol):
     name: str
 
     def stocks(self, codes: list[str]) -> dict[str, Quote]: ...
-    def indices(self) -> dict[str, Quote]: ...
+    def indices(self, codes: list[str]) -> dict[str, Quote]: ...
 
 
 def _num(value: object) -> float:
@@ -211,7 +323,7 @@ def parse_naver(payload: dict) -> dict[str, Quote]:
 
 
 class NaverQuotes:
-    """네이버 증권 시세 (공식 API는 아니라서 형식이 바뀌면 데모 시세로 바뀌어요)."""
+    """국내 시세: 네이버 증권 (공식 API는 아니라서 형식이 바뀌면 연습용 시세로 바뀌어요)."""
 
     name = "naver"
     BASE = "https://polling.finance.naver.com/api/realtime/domestic"
@@ -232,14 +344,64 @@ class NaverQuotes:
     def stocks(self, codes: list[str]) -> dict[str, Quote]:
         return self._get("stock", codes)
 
-    def indices(self) -> dict[str, Quote]:
+    def indices(self, codes: list[str]) -> dict[str, Quote]:
         out: dict[str, Quote] = {}
-        for code, name, _ in INDICES:
+        for code in codes:
             q = self._get("index", [code]).get(code)
             if q:
-                q.name = name
                 out[code] = q
         return out
+
+
+def parse_yahoo_chart(payload: dict) -> Quote:
+    """야후 파이낸스 chart API 응답에서 현재가와 전일 종가를 꺼내요."""
+    meta = payload["chart"]["result"][0]["meta"]
+    code = meta["symbol"]
+    price = float(meta["regularMarketPrice"])
+    prev = float(meta.get("chartPreviousClose") or meta.get("previousClose") or price)
+    change = price - prev
+    pct = round(change / prev * 100, 2) if prev else 0.0
+    name = STOCKS[code].name if code in STOCKS else meta.get("shortName", code)
+    return Quote(code, name, price, round(change, 4), pct, meta.get("currency", "USD"))
+
+
+class YahooQuotes:
+    """미국 시세와 환율: 야후 파이낸스 (키 필요 없음, 공식 API 아님, 15분 이내 지연 가능)."""
+
+    name = "yahoo"
+    BASE = "https://query1.finance.yahoo.com/v8/finance/chart/"
+
+    def __init__(self, client: httpx.Client | None = None) -> None:
+        self.client = client or httpx.Client(
+            timeout=6.0, headers={"User-Agent": "Mozilla/5.0 (market-weather)"}
+        )
+
+    def _one(self, code: str) -> Quote:
+        r = self.client.get(self.BASE + code, params={"range": "1d", "interval": "1d"})
+        r.raise_for_status()
+        return parse_yahoo_chart(r.json())
+
+    def _many(self, codes: list[str]) -> dict[str, Quote]:
+        out: dict[str, Quote] = {}
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for code, q in zip(codes, pool.map(self._safe, codes), strict=True):
+                if q:
+                    out[code] = q
+        if not out:
+            raise ValueError("no yahoo quotes")
+        return out
+
+    def _safe(self, code: str) -> Quote | None:
+        try:
+            return self._one(code)
+        except Exception:
+            return None
+
+    def stocks(self, codes: list[str]) -> dict[str, Quote]:
+        return self._many(codes)
+
+    def indices(self, codes: list[str]) -> dict[str, Quote]:
+        return self._many(codes)
 
 
 class DemoQuotes:
@@ -247,7 +409,7 @@ class DemoQuotes:
 
     name = "demo"
 
-    def __init__(self, now: callable | None = None) -> None:  # type: ignore[valid-type]
+    def __init__(self, now: Callable[[], datetime] | None = None) -> None:
         self.now = now or (lambda: datetime.now(KST))
 
     @staticmethod
@@ -258,7 +420,7 @@ class DemoQuotes:
     def _pct(self, key: str, sector_key: str) -> float:
         now = self.now()
         day = now.strftime("%Y-%m-%d")
-        market = self._rng(day, "market").gauss(0, 0.9)
+        market = self._rng(day, "market", sector_key[:3]).gauss(0, 0.9)
         sector = self._rng(day, sector_key).gauss(0, 1.2)
         own = self._rng(day, key).gauss(0, 1.0)
         tick = self._rng(day, key, str(now.hour * 6 + now.minute // 10)).gauss(0, 0.25)
@@ -270,49 +432,109 @@ class DemoQuotes:
             st = STOCKS.get(code)
             if not st:
                 continue
-            pct = self._pct(code, SECTOR_OF[code].id)
+            sec = SECTOR_OF[code]
+            pct = self._pct(code, sec.id)
             prev = st.base_price
-            price = max(1.0, round(prev * (1 + pct / 100) / 10) * 10)
-            out[code] = Quote(
-                code, st.name, price, price - prev, round((price / prev - 1) * 100, 2)
-            )
+            if sec.market == "KR":
+                price = max(1.0, round(prev * (1 + pct / 100) / 10) * 10)
+                out[code] = Quote(
+                    code, st.name, price, price - prev, round((price / prev - 1) * 100, 2)
+                )
+            else:
+                price = round(prev * (1 + pct / 100), 2)
+                out[code] = Quote(
+                    code,
+                    st.name,
+                    price,
+                    round(price - prev, 2),
+                    round((price / prev - 1) * 100, 2),
+                    "USD",
+                )
         return out
 
-    def indices(self) -> dict[str, Quote]:
+    def indices(self, codes: list[str]) -> dict[str, Quote]:
         out = {}
-        for code, name, base in INDICES:
-            pct = round(self._pct(code, "index") * 0.6, 2)
+        for code, name, base, market in INDICES:
+            if code not in codes:
+                continue
+            pct = round(self._pct(code, ("us-" if market == "US" else "") + "index") * 0.6, 2)
             price = round(base * (1 + pct / 100), 2)
             out[code] = Quote(code, name, price, round(price - base, 2), pct)
         return out
 
+    def fx(self) -> float:
+        return round(
+            DEMO_FX * (1 + self._rng(self.now().strftime("%Y-%m-%d"), "fx").gauss(0, 0.004)), 2
+        )
+
+
+def codes_of(market: str) -> tuple[list[str], list[str]]:
+    stocks = [s.code for sec in SECTORS if sec.market == market for s in sec.stocks]
+    indices = [c for c, _, _, m in INDICES if m == market]
+    return stocks, indices
+
 
 class MarketData:
-    """시세 공급자 + 짧은 캐시 + 실패 시 데모로 대체."""
+    """시장별 시세 공급자 + 짧은 캐시 + 실패하면 그 시장만 연습용 시세로 대체."""
 
-    def __init__(self, primary: QuoteProvider, cache_seconds: int = 60) -> None:
-        self.primary = primary
+    def __init__(
+        self,
+        providers: dict[str, QuoteProvider],
+        cache_seconds: int = 60,
+        fx_provider: YahooQuotes | None = None,
+    ) -> None:
+        self.providers = providers
+        self.fx_provider = fx_provider
         self.demo = DemoQuotes()
         self.cache_seconds = cache_seconds
         self._cache: tuple[float, dict] | None = None
 
+    def _market(self, market: str) -> tuple[str, dict[str, Quote], dict[str, Quote]]:
+        stock_codes, index_codes = codes_of(market)
+        provider = self.providers.get(market) or self.demo
+        try:
+            stocks = provider.stocks(stock_codes)
+            indices = provider.indices(index_codes)
+            if len(stocks) < len(stock_codes) // 2:
+                raise ValueError("too few quotes")
+            return provider.name, stocks, indices
+        except Exception:
+            return "demo", self.demo.stocks(stock_codes), self.demo.indices(index_codes)
+
+    def _fx(self) -> tuple[float, str]:
+        if self.fx_provider is not None:
+            try:
+                rate = self.fx_provider._one(FX_CODE).price
+                if 500 < rate < 5000:
+                    return rate, self.fx_provider.name
+            except Exception:
+                pass
+        return self.demo.fx(), "demo"
+
     def snapshot(self) -> dict:
-        """모든 지수·종목 시세를 한 번에. {'source', 'indices', 'stocks', 'updated_at'}"""
+        """모든 지수·종목 시세를 한 번에. {'sources', 'fx', 'indices', 'stocks', 'updated_at'}"""
         if self._cache and time.monotonic() - self._cache[0] < self.cache_seconds:
             return self._cache[1]
-        codes = list(STOCKS)
-        source = self.primary.name
-        try:
-            stocks = self.primary.stocks(codes)
-            indices = self.primary.indices()
-            if len(stocks) < len(codes) // 2:
-                raise ValueError("too few quotes")
-        except Exception:
-            source = "demo"
-            stocks = self.demo.stocks(codes)
-            indices = self.demo.indices()
+        sources: dict[str, str] = {}
+        stocks: dict[str, Quote] = {}
+        indices: dict[str, Quote] = {}
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            jobs = {m: pool.submit(self._market, m) for m in MARKETS}
+            fx_job = pool.submit(self._fx)
+            for m, job in jobs.items():
+                sources[m], st, ix = job.result()
+                stocks.update(st)
+                indices.update(ix)
+            fx, fx_source = fx_job.result()
+        for q in stocks.values():
+            if q.currency == "USD":
+                q.price_krw = round(q.price * fx, 2)
+        for code, name, _, _ in INDICES:
+            if code in indices:
+                indices[code].name = name
         snap = {
-            "source": source,
+            "sources": sources,
+            "fx": {"usdkrw": fx, "source": fx_source},
             "indices": indices,
             "stocks": stocks,
             "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
@@ -327,16 +549,18 @@ class MarketData:
 # ---------------------------------------------------------------------------
 # 메인 화면용 '시장 날씨 예보'
 # ---------------------------------------------------------------------------
-def forecast(snap: dict) -> dict:
+def forecast(snap: dict, market: str = "KR") -> dict:
     stocks: dict[str, Quote] = snap["stocks"]
     indices = []
-    for code, _, _ in INDICES:
+    for code, _, _, m in INDICES:
         q = snap["indices"].get(code)
-        if q:
+        if q and m == market:
             indices.append({**asdict(q), "weather": asdict(weather_for(q.change_pct))})
 
     sectors = []
     for sec in SECTORS:
+        if sec.market != market:
+            continue
         qs = [stocks[s.code] for s in sec.stocks if s.code in stocks]
         if not qs:
             continue
@@ -358,7 +582,9 @@ def forecast(snap: dict) -> dict:
         )
 
     return {
-        "source": snap["source"],
+        "market": market,
+        "source": snap["sources"].get(market, "demo"),
+        "fx": snap["fx"],
         "updated_at": snap["updated_at"],
         "indices": indices,
         "sectors": sectors,

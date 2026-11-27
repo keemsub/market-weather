@@ -13,6 +13,7 @@ from app.market import (
     Quote,
     forecast,
     parse_naver,
+    parse_yahoo_chart,
     weather_for,
 )
 
@@ -76,14 +77,36 @@ def test_market_falls_back_to_demo():
         def stocks(self, codes):
             raise RuntimeError("blocked")
 
-        def indices(self):
+        def indices(self, codes):
             raise RuntimeError("blocked")
 
-    snap = MarketData(Broken()).snapshot()
-    assert snap["source"] == "demo"
+    snap = MarketData({"KR": Broken(), "US": Broken()}).snapshot()
+    assert snap["sources"] == {"KR": "demo", "US": "demo"}
     assert len(snap["stocks"]) == len(STOCKS)
-    fc = forecast(snap)
-    assert len(fc["sectors"]) == 8 and len(fc["indices"]) == 2
+    kr, us = forecast(snap, "KR"), forecast(snap, "US")
+    assert len(kr["sectors"]) == 8 and len(kr["indices"]) == 2
+    assert len(us["sectors"]) == 8 and len(us["indices"]) == 3
+    aapl = snap["stocks"]["AAPL"]
+    assert aapl.currency == "USD" and aapl.price_krw == round(aapl.price * snap["fx"]["usdkrw"], 2)
+
+
+def test_parse_yahoo_chart():
+    payload = {
+        "chart": {
+            "result": [
+                {
+                    "meta": {
+                        "symbol": "AAPL",
+                        "currency": "USD",
+                        "regularMarketPrice": 202.0,
+                        "chartPreviousClose": 200.0,
+                    }
+                }
+            ]
+        }
+    }
+    q = parse_yahoo_chart(payload)
+    assert q.name == "애플" and q.price == 202.0 and q.change_pct == 1.0 and q.currency == "USD"
 
 
 def test_demo_is_stable_within_day():
@@ -117,6 +140,14 @@ def test_trade_flow(client):
     # 현금 부족
     r = client.post("/api/trade", json={"code": "207940", "side": "buy", "qty": 100000})
     assert r.status_code == 400 and "현금이 부족" in r.json()["detail"]
+
+    # 미국 주식: 원화 계좌에서 환율로 계산
+    us = client.get("/api/weather?m=US").json()
+    assert us["market"] == "US" and us["fx"]["usdkrw"] > 1000
+    r = client.post("/api/trade", json={"code": "AAPL", "side": "buy", "qty": 3})
+    assert r.status_code == 200, r.text
+    h = r.json()["portfolio"]["holdings"][0]
+    assert h["currency"] == "USD" and h["market"] == "US" and h["price"] > h["native_price"]
 
     assert client.post("/api/reset").status_code == 200
     assert client.get("/api/portfolio").json()["trades"] == []

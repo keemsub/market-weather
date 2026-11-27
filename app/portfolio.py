@@ -55,7 +55,7 @@ def summary(account: Account, trades: list[Trade], quotes: dict[str, Quote], sta
     stock_value = 0.0
     for hd in holdings_from(trades).values():
         q = quotes.get(hd.code)
-        price = q.price if q else hd.avg_price
+        price = q.price_krw if q else hd.avg_price
         value = price * hd.qty
         stock_value += value
         sec = SECTOR_OF.get(hd.code)
@@ -67,6 +67,9 @@ def summary(account: Account, trades: list[Trade], quotes: dict[str, Quote], sta
                 "qty": hd.qty,
                 "avg_price": round(hd.avg_price, 2),
                 "price": price,
+                "native_price": q.price if q else None,
+                "currency": q.currency if q else "KRW",
+                "market": sec.market if sec else "KR",
                 "today_pct": q.change_pct if q else 0.0,
                 "value": round(value),
                 "pnl": round(value - hd.cost),
@@ -105,14 +108,14 @@ def execute(db: Session, account: Account, quote: Quote, side: str, qty: int) ->
         raise TradeError("매수 또는 매도만 할 수 있어요.")
     if qty <= 0:
         raise TradeError("수량은 1주 이상이어야 해요.")
-    if quote.price <= 0:
+    if quote.price_krw <= 0:
         raise TradeError("지금은 가격을 알 수 없어요. 잠시 뒤 다시 해 주세요.")
 
-    amount = quote.price * qty
+    amount = quote.price_krw * qty
     if side == "buy":
         need = amount * (1 + FEE_RATE)
         if need > account.cash + 1e-6:
-            can = int(account.cash // (quote.price * (1 + FEE_RATE)))
+            can = int(account.cash // (quote.price_krw * (1 + FEE_RATE)))
             raise TradeError(f"현금이 부족해요. 지금은 최대 {can:,}주까지 살 수 있어요.")
         account.cash -= need
     else:
@@ -128,7 +131,7 @@ def execute(db: Session, account: Account, quote: Quote, side: str, qty: int) ->
         name=quote.name,
         side=side,
         qty=qty,
-        price=quote.price,
+        price=quote.price_krw,
         change_pct=quote.change_pct,
     )
     db.add(trade)
