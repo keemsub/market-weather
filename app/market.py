@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import random
 import time
 from collections.abc import Callable
@@ -17,6 +18,7 @@ from typing import Protocol
 
 import httpx
 
+log = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 
 
@@ -388,13 +390,16 @@ class YahooQuotes:
                 if q:
                     out[code] = q
         if not out:
-            raise ValueError("no yahoo quotes")
+            raise ValueError(f"야후 응답 없음 ({self.last_error or '?'})")
         return out
+
+    last_error = ""
 
     def _safe(self, code: str) -> Quote | None:
         try:
             return self._one(code)
-        except Exception:
+        except Exception as e:
+            self.last_error = str(e)[:120]
             return None
 
     def stocks(self, codes: list[str]) -> dict[str, Quote]:
@@ -402,6 +407,148 @@ class YahooQuotes:
 
     def indices(self, codes: list[str]) -> dict[str, Quote]:
         return self._many(codes)
+
+    def fx(self) -> float:
+        return self._one(FX_CODE).price
+
+
+# 네이버 해외주식 코드: 나스닥 .O / 뉴욕증권거래소 .N (거래소를 옮기면 다른 쪽도 시도해요)
+NAVER_US_CODES = {
+    "AAPL": "AAPL.O",
+    "MSFT": "MSFT.O",
+    "GOOGL": "GOOGL.O",
+    "AMZN": "AMZN.O",
+    "META": "META.O",
+    "NVDA": "NVDA.O",
+    "AMD": "AMD.O",
+    "AVGO": "AVGO.O",
+    "TSM": "TSM.N",
+    "TSLA": "TSLA.O",
+    "RIVN": "RIVN.O",
+    "UBER": "UBER.N",
+    "JPM": "JPM.N",
+    "BAC": "BAC.N",
+    "GS": "GS.N",
+    "V": "V.N",
+    "LLY": "LLY.N",
+    "JNJ": "JNJ.N",
+    "UNH": "UNH.N",
+    "PFE": "PFE.N",
+    "KO": "KO.N",
+    "COST": "COST.O",
+    "WMT": "WMT.O",
+    "MCD": "MCD.N",
+    "XOM": "XOM.N",
+    "CVX": "CVX.N",
+    "NFLX": "NFLX.O",
+    "DIS": "DIS.N",
+    "SPOT": "SPOT.N",
+}
+NAVER_US_INDEX = {"^GSPC": ".INX", "^IXIC": ".IXIC", "^DJI": ".DJI"}
+
+
+def _other_exchange(reuters: str) -> str:
+    base, _, ex = reuters.rpartition(".")
+    return f"{base}.{'N' if ex == 'O' else 'O'}"
+
+
+class NaverWorldQuotes:
+    """미국 시세: 네이버 해외주식 (키 필요 없음, 공식 API 아님)."""
+
+    name = "naver"
+    BASE = "https://polling.finance.naver.com/api/realtime/worldstock"
+
+    def __init__(self, client: httpx.Client | None = None) -> None:
+        self.client = client or httpx.Client(
+            timeout=6.0, headers={"User-Agent": "Mozilla/5.0 (market-weather)"}
+        )
+
+    def _get(self, kind: str, reuters: str) -> dict | None:
+        r = self.client.get(f"{self.BASE}/{kind}/{reuters}")
+        if r.status_code != 200:
+            return None
+        datas = (r.json() or {}).get("datas") or []
+        return datas[0] if datas else None
+
+    def _quote(self, code: str, d: dict, currency: str) -> Quote:
+        q = parse_naver({"datas": [{**d, "itemCode": code}]})[code]
+        q.currency = currency
+        q.price_krw = 0.0
+        return q
+
+    def _one_stock(self, code: str) -> Quote | None:
+        reuters = NAVER_US_CODES.get(code, f"{code}.O")
+        try:
+            d = self._get("stock", reuters) or self._get("stock", _other_exchange(reuters))
+        except Exception:
+            return None
+        return self._quote(code, d, "USD") if d else None
+
+    def stocks(self, codes: list[str]) -> dict[str, Quote]:
+        out: dict[str, Quote] = {}
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for code, q in zip(codes, pool.map(self._one_stock, codes), strict=True):
+                if q and q.price > 0:
+                    q.name = STOCKS[code].name if code in STOCKS else q.name
+                    out[code] = q
+        if not out:
+            raise ValueError("네이버 해외주식 응답 없음")
+        return out
+
+    def indices(self, codes: list[str]) -> dict[str, Quote]:
+        out: dict[str, Quote] = {}
+        for code in codes:
+            try:
+                d = self._get("index", NAVER_US_INDEX.get(code, code))
+            except Exception:
+                d = None
+            if d:
+                out[code] = self._quote(code, d, "USD")
+        return out
+
+    def fx(self) -> float:
+        r = self.client.get(
+            "https://m.stock.naver.com/front-api/marketIndex/productDetail",
+            params={"category": "exchange", "reutersCode": "FX_USDKRW"},
+        )
+        r.raise_for_status()
+        return _num((r.json().get("result") or {}).get("closePrice"))
+
+
+class ChainQuotes:
+    """앞의 출처가 안 되면 다음 출처로. 성공한 출처 이름을 name에 남겨요."""
+
+    def __init__(self, *providers: QuoteProvider) -> None:
+        self.providers = providers
+        self.name = providers[0].name
+        self.errors: list[str] = []
+
+    def _try(self, method: str, codes: list[str]) -> dict[str, Quote]:
+        self.errors = []
+        for p in self.providers:
+            try:
+                out = getattr(p, method)(codes)
+                if method == "stocks" and len(out) < len(codes) // 2:
+                    raise ValueError(f"{len(out)}/{len(codes)}개만 받음")
+                self.name = p.name
+                return out
+            except Exception as e:
+                self.errors.append(f"{p.name}: {str(e)[:120]}")
+        raise ValueError("; ".join(self.errors))
+
+    def stocks(self, codes: list[str]) -> dict[str, Quote]:
+        return self._try("stocks", codes)
+
+    def indices(self, codes: list[str]) -> dict[str, Quote]:
+        for p in self.providers:  # 종목을 받은 출처의 지수를 먼저
+            if p.name == self.name:
+                try:
+                    out = p.indices(codes)
+                    if out:
+                        return out
+                except Exception:
+                    pass
+        return self._try("indices", codes)
 
 
 class DemoQuotes:
@@ -481,13 +628,18 @@ class MarketData:
         self,
         providers: dict[str, QuoteProvider],
         cache_seconds: int = 60,
-        fx_provider: YahooQuotes | None = None,
+        fx_provider: object | None = None,
     ) -> None:
         self.providers = providers
-        self.fx_provider = fx_provider
+        self.fx_providers = (
+            list(fx_provider)
+            if isinstance(fx_provider, list | tuple)
+            else ([fx_provider] if fx_provider is not None else [])
+        )
         self.demo = DemoQuotes()
         self.cache_seconds = cache_seconds
         self._cache: tuple[float, dict] | None = None
+        self.errors: dict[str, str] = {}
 
     def _market(self, market: str) -> tuple[str, dict[str, Quote], dict[str, Quote]]:
         stock_codes, index_codes = codes_of(market)
@@ -496,19 +648,22 @@ class MarketData:
             stocks = provider.stocks(stock_codes)
             indices = provider.indices(index_codes)
             if len(stocks) < len(stock_codes) // 2:
-                raise ValueError("too few quotes")
+                raise ValueError(f"{len(stocks)}/{len(stock_codes)}개만 받음")
+            self.errors.pop(market, None)
             return provider.name, stocks, indices
-        except Exception:
+        except Exception as e:
+            self.errors[market] = str(e)[:300]
+            log.warning("%s 시세 실패, 연습용으로 대체: %s", market, e)
             return "demo", self.demo.stocks(stock_codes), self.demo.indices(index_codes)
 
     def _fx(self) -> tuple[float, str]:
-        if self.fx_provider is not None:
+        for p in self.fx_providers:
             try:
-                rate = self.fx_provider._one(FX_CODE).price
+                rate = p.fx()
                 if 500 < rate < 5000:
-                    return rate, self.fx_provider.name
-            except Exception:
-                pass
+                    return rate, p.name
+            except Exception as e:
+                log.info("환율 %s 실패: %s", p.name, e)
         return self.demo.fx(), "demo"
 
     def snapshot(self) -> dict:
@@ -534,6 +689,7 @@ class MarketData:
                 indices[code].name = name
         snap = {
             "sources": sources,
+            "errors": dict(self.errors),
             "fx": {"usdkrw": fx, "source": fx_source},
             "indices": indices,
             "stocks": stocks,
