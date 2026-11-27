@@ -1,0 +1,30 @@
+# Render 배포 설정 (Blueprint). Render 대시보드에서 New → Blueprint 로 이 저장소를 고르면 읽혀요.
+services:
+  - type: web
+    name: market-weather
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # 익명 계정 쿠키 서명용 비밀값: Render가 무작위로 만들어 줘요.
+      - key: SECRET_KEY
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "true"
+      # 시세: naver(실제 시세) 또는 demo(연습용)
+      - key: MARKET_SOURCE
+        value: naver
+      # AI 코치: gemini 또는 openai(Groq 등). 키를 비우면 규칙 코치로 동작해요.
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: LLM_BASE_URL
+        sync: false
+      # 데이터베이스 주소 (Neon 무료 등). 비우면 서버가 다시 시작될 때 기록이 사라져요.
+      - key: DATABASE_URL
+        sync: false
