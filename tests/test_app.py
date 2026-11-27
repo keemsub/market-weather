@@ -209,3 +209,60 @@ def test_gemini_request_shape():
     c = GeminiClient("k", http=httpx.Client(transport=httpx.MockTransport(handler)))
     assert c.complete("sys", "hi") == "좋아요"
     assert "gemini-2.5-flash:generateContent" in seen["url"] and seen["key"] == "k"
+
+
+def test_find_stocks():
+    from app.insights import find_stocks
+
+    assert find_stocks("삼성전자 왜 떨어졌어?") == ["005930"]
+    assert "NVDA" in find_stocks("엔비디아랑 tsla 어때")
+    assert "TSLA" in find_stocks("엔비디아랑 tsla 어때")
+    assert find_stocks("오늘 시장 어때?") == []
+    assert "GOOGL" in find_stocks("구글 주가")
+
+
+def test_ask_and_report(client):
+    r = client.post("/api/ask", json={"question": "삼성전자 왜 떨어졌어?"})
+    assert r.status_code == 200 and r.json()["source"] == "rule"
+    assert "삼성전자" in r.json()["text"]
+
+    r = client.post(
+        "/api/ask",
+        json={
+            "question": "오늘 시장 어때?",
+            "history": [{"role": "user", "text": "안녕"}, {"role": "coach", "text": "안녕하세요"}],
+        },
+    )
+    assert r.status_code == 200 and r.json()["text"]
+    assert client.post("/api/ask", json={"question": ""}).status_code == 422
+
+    empty = client.get("/api/report").json()
+    assert empty["stats"]["trades"] == 0 and empty["text"]
+
+    client.post("/api/trade", json={"code": "005930", "side": "buy", "qty": 10})
+    client.post("/api/trade", json={"code": "005930", "side": "sell", "qty": 5})
+    rep = client.get("/api/report").json()
+    st = rep["stats"]
+    assert st["trades"] == 2 and st["buys"] == 1 and st["sells"] == 1
+    assert st["quick_flips"] == 1  # 바로 팔았으니 10분 단타
+    assert rep["weather"]["emoji"] and rep["source"] == "rule"
+
+
+def test_weekly_stats_realized():
+    from app.insights import weekly_stats
+
+    b = _trade(1, "buy", 10, 1000, 0, minutes_ago=60 * 24 * 3)
+    s = _trade(2, "sell", 4, 1200, 0, minutes_ago=60)
+    old = _trade(3, "buy", 1, 1000, 9, minutes_ago=60 * 24 * 30)
+    pf = {"holdings": [], "total": 10_000_000, "cash": 10_000_000, "return_pct": 0.0}
+    st = weekly_stats([old, b, s], pf)
+    assert st["trades"] == 2 and st["realized"] == 800 and st["win_rate"] == 100
+    assert st["chase_buys"] == 0  # 한 달 전 추격 매수는 이번 주에 안 들어가요
+
+
+def test_ask_rule_uses_only_this_question(client):
+    h = [{"role": "user", "text": "삼성전자 어때?"}, {"role": "coach", "text": "삼성전자는..."}]
+    r = client.post("/api/ask", json={"question": "내 지갑 어때?", "history": h}).json()
+    assert "총자산" in r["text"]
+    r = client.post("/api/ask", json={"question": "분산 투자가 뭐야?"}).json()
+    assert "바구니" in r["text"]

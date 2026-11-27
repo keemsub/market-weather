@@ -15,6 +15,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.coach import Coach, find_facts, make_llm
 from app.config import get_settings
 from app.db import Account, Trade, get_db
+from app.insights import ask, weekly_report
 from app.market import (
     MARKETS,
     SECTOR_OF,
@@ -137,6 +138,33 @@ def trade(body: TradeIn, db: DB, me: Me, market: Market):
         "coach": {"text": t.coach, "source": t.coach_source},
         "portfolio": data,
     }
+
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "coach"]
+    text: str = Field(max_length=1200)
+
+
+class AskIn(BaseModel):
+    question: str = Field(min_length=1, max_length=300)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=12)
+
+
+@app.post("/api/ask")
+def ask_coach(body: AskIn, db: DB, me: Me, market: Market):
+    snap = market.snapshot()
+    pf = summary(me, trades_of(db, me), snap["stocks"], get_settings().starting_cash)
+    history = [h.model_dump() for h in body.history]
+    text, source = ask(get_coach(), body.question.strip(), history, snap, pf)
+    return {"text": text, "source": source}
+
+
+@app.get("/api/report")
+def report(db: DB, me: Me, market: Market):
+    snap = market.snapshot()
+    trades = trades_of(db, me)
+    pf = summary(me, trades, snap["stocks"], get_settings().starting_cash)
+    return weekly_report(get_coach(), trades, pf)
 
 
 @app.post("/api/reset")

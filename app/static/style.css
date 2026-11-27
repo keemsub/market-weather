@@ -224,3 +224,79 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; background: 
 .sky-top .right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .fx-note { color: var(--sub); font-size: 12px; text-align: center; margin: 10px 16px 0; line-height: 1.6; }
 .item .krw { font-size: 11.5px; color: var(--sub); font-weight: 500; }
+
+/* ---------- 첫 화면 ---------- */
+.splash {
+  position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(900px 500px at 50% 0%, #22306b 0%, #0b1020 70%); color: var(--ink);
+  transition: opacity .45s ease, transform .45s ease; padding: 24px;
+}
+.splash.out { opacity: 0; transform: scale(1.04); pointer-events: none; }
+.splash-sky { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.s-star { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #fff; opacity: .7; animation: twinkle 2.4s ease-in-out infinite; }
+.s-star:nth-child(1) { top: 14%; left: 18%; } .s-star:nth-child(2) { top: 22%; left: 78%; animation-delay: .8s; } .s-star:nth-child(3) { top: 9%; left: 55%; animation-delay: 1.5s; }
+@keyframes twinkle { 50% { opacity: .15; } }
+.splash-load, .splash-pick { position: relative; text-align: center; width: 100%; max-width: 420px; animation: fade .4s ease; }
+.splash h1 { font-size: 30px; margin: 10px 0 6px; letter-spacing: -.03em; }
+.splash p { color: var(--sub); margin: 0; font-size: 15px; }
+.splash-cloud { position: relative; height: 130px; }
+.cloud-big { font-size: 110px; position: relative; display: inline-block; animation: bob 2.4s ease-in-out infinite; }
+.sun-peek { position: absolute; font-size: 64px; left: 50%; top: 4px; margin-left: 8px; animation: peek 2.4s ease-in-out infinite; }
+@keyframes peek { 0%, 100% { transform: translate(0, 10px) rotate(0); } 50% { transform: translate(14px, -6px) rotate(25deg); } }
+.dots i { font-style: normal; animation: dot 1.2s infinite; opacity: 0; }
+.dots i:nth-child(2) { animation-delay: .2s; } .dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes dot { 30%, 70% { opacity: 1; } }
+.splash-pick h1 { margin-bottom: 4px; }
+.splash-pick p { margin-bottom: 22px; font-size: 13.5px; }
+.pick {
+  display: flex; align-items: center; gap: 14px; width: 100%; margin-top: 12px; padding: 20px 18px;
+  border-radius: 22px; background: var(--card); border: 1px solid var(--line); text-align: left;
+  box-shadow: var(--shadow); transition: transform .12s, border-color .2s;
+}
+.pick:active { transform: scale(.97); }
+.pick:hover { border-color: #3d4b72; }
+.pick .flag { font-size: 40px; }
+.pick-main { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.pick-main b { font-size: 19px; }
+.pick-main small { color: var(--sub); font-size: 13px; }
+.pick-wx { font-size: 38px; }
+
+/* ---------- 구름이 채팅 ---------- */
+#view-chat.active { display: flex; flex-direction: column; min-height: calc(100vh - 76px); }
+.chat-head { display: flex; align-items: center; gap: 12px; padding: calc(16px + env(safe-area-inset-top)) 18px 12px; border-bottom: 1px solid var(--line); }
+.chat-face { font-size: 38px; animation: bob 2.4s ease-in-out infinite; }
+.chat-head h2 { margin: 0; font-size: 18px; }
+.chat-head p { margin: 2px 0 0; font-size: 12.5px; color: var(--sub); }
+.chat-clear { margin-left: auto; color: var(--sub); font-size: 13px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; }
+.chat-list { flex: 1; padding: 14px 16px 8px; display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 86%; padding: 11px 14px; border-radius: 18px; font-size: 14.5px; line-height: 1.6; white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; }
+.msg.m-user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 6px; }
+.msg.m-coach { align-self: flex-start; background: var(--card2); border-bottom-left-radius: 6px; }
+.msg.m-coach small { display: block; color: var(--sub); font-size: 11px; margin-top: 4px; }
+.msg.typing::after { content: "구름이가 생각 중…"; color: var(--sub); }
+.chips { display: flex; gap: 6px; overflow-x: auto; padding: 4px 16px 8px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chips button { flex: none; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-size: 13px; color: var(--ink); }
+.chat-input { position: sticky; bottom: calc(68px + env(safe-area-inset-bottom)); display: flex; gap: 8px; padding: 8px 12px 10px; background: var(--bg); }
+.chat-input input { flex: 1; min-width: 0; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-size: 15px; }
+.chat-input button { padding: 0 16px; border-radius: 14px; background: var(--accent); color: #fff; font-weight: 700; }
+.chat-input button:disabled { opacity: .5; }
+
+/* ---------- 주간 리포트 ---------- */
+.report-card { display: flex; align-items: center; gap: 12px; width: calc(100% - 32px); margin: 16px 16px 0; padding: 14px 16px; border-radius: 16px; background: linear-gradient(135deg, #1f2b4d, #2a2357); border: 1px solid #35406a; text-align: left; }
+.rc-icon { font-size: 28px; }
+.rc-main { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.rc-main small { color: var(--sub); font-size: 12.5px; }
+.rc-go { font-size: 24px; color: var(--sub); }
+.report-body { padding: 0 18px 4px; }
+.rp-top { text-align: center; padding: 6px 0 14px; }
+.rp-top .wx { font-size: 64px; }
+.rp-top h3 { margin: 4px 0 2px; font-size: 21px; }
+.rp-top p { margin: 0; color: var(--sub); font-size: 13px; }
+.rp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.rp-grid div { background: var(--card); border-radius: 14px; padding: 10px; text-align: center; }
+.rp-grid span { display: block; color: var(--sub); font-size: 11.5px; }
+.rp-grid b { font-size: 16px; }
+.rp-text { margin-top: 14px; background: var(--card2); border-radius: 16px; padding: 14px; font-size: 14.5px; line-height: 1.7; white-space: pre-wrap; }
+.rp-text small { display: block; color: var(--sub); font-size: 11.5px; margin-top: 6px; }
+.rp-tags { margin-top: 10px; color: var(--sub); font-size: 12.5px; line-height: 1.7; }
