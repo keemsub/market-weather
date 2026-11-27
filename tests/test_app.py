@@ -325,3 +325,43 @@ def test_gemini_pick_model():
     assert pick(["gemini-flash-latest", "gemini-9-flash"]) == "gemini-flash-latest"
     assert pick(["gemini-2.5-flash-lite"]) == "gemini-2.5-flash-lite"
     assert pick(["gemini-2.5-pro"]) is None
+
+
+def test_gemini_empty_text_raises_with_reason():
+    with pytest.raises(ValueError, match="MAX_TOKENS"):
+        GeminiClient.extract_text(
+            {"candidates": [{"content": {"role": "model"}, "finishReason": "MAX_TOKENS"}]}
+        )
+    with pytest.raises(ValueError, match="SAFETY"):
+        GeminiClient.extract_text({"promptFeedback": {"blockReason": "SAFETY"}})
+    assert (
+        GeminiClient.extract_text(
+            {
+                "candidates": [
+                    {"content": {"parts": [{"text": "생각", "thought": True}, {"text": "답"}]}}
+                ]
+            }
+        )
+        == "답"
+    )
+
+
+def test_report_uses_llm_and_caches(client, monkeypatch):
+    calls = []
+
+    class Fake:
+        name = "gemini"
+
+        def complete(self, system, user):
+            calls.append(user)
+            return "☀️ 맑은 한 주\n잘한 점..."
+
+    monkeypatch.setattr(main.get_coach(), "llm", Fake())
+    r1 = client.get("/api/report").json()
+    r2 = client.get("/api/report").json()
+    assert r1["source"] == "gemini" and r2["text"] == r1["text"] and len(calls) == 1
+    client.post(
+        "/api/trade", json={"code": "005930", "side": "buy", "qty": 1}
+    )  # 코치 한마디도 LLM 호출
+    client.get("/api/report")
+    assert len(calls) == 3  # 매매가 생기면 리포트를 새로 써요
