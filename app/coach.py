@@ -258,7 +258,7 @@ class OpenAICompatibleClient:
             json={
                 "model": self.model,
                 "temperature": 0.8,
-                "max_tokens": 400,
+                "max_tokens": 800,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -299,10 +299,16 @@ class Coach:
             f"계좌 상태: {portfolio_line}\n"
             "관찰한 사실:\n" + "\n".join(f"- {f.text}" for f in facts[:3])
         )
+        return self.say(SYSTEM_PROMPT, user, fallback, limit=600)
+
+    def say(self, system: str, user: str, fallback: str, limit: int = 1200) -> tuple[str, str]:
+        """LLM에게 물어보고, 키가 없거나 실패하면 fallback 문장을 돌려줘요."""
+        if not self.llm:
+            return fallback, "rule"
         try:
-            text = self.llm.complete(SYSTEM_PROMPT, user)
+            text = self.llm.complete(system, user)
             if text:
-                return text[:600], self.llm.name
+                return text[:limit], self.llm.name
         except Exception as e:  # 한도 초과, 네트워크 오류 등
-            log.warning("LLM 코치 실패, 규칙 코치로 대체: %s", e)
+            log.warning("LLM 실패, 규칙 문장으로 대체: %s", e)
         return fallback, "rule"

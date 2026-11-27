@@ -241,7 +241,7 @@ $("#order-btn").addEventListener("click", async () => {
 });
 
 // ---------- 코치 ----------
-const SRC = { gemini: "AI · Gemini", openai: "AI", rule: "기본 코치" };
+const SRC = { gemini: "AI · Gemini", openai: "AI", rule: "기본 답변" };
 function showCoach(c) {
   $("#coach").classList.remove("hidden");
   const t = $("#coach-text");
@@ -322,6 +322,7 @@ document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () 
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${b.dataset.view}`));
   hideCoach();
   window.scrollTo(0, 0);
+  if (b.dataset.view === "chat") renderChat();
 }));
 
 function closeSheets() {
@@ -336,7 +337,118 @@ document.querySelectorAll(".sheet-wrap").forEach((w) => w.addEventListener("clic
 }));
 
 // ---------- 시작 ----------
-setMarket(state.market);
-loadWeather(state.market === "KR" ? "US" : "KR");
-loadPortfolio();
+// ---------- 구름이에게 질문하기 ----------
+const CHAT_KEY = "chat";
+state.chat = [];
+try { state.chat = JSON.parse(localStorage.getItem(CHAT_KEY) || "[]"); } catch (e) {}
+const saveChat = () => { try { localStorage.setItem(CHAT_KEY, JSON.stringify(state.chat.slice(-30))); } catch (e) {} };
+
+function renderChat() {
+  const list = $("#chat-list");
+  const greet = { role: "coach", text: "안녕하세요, 구름이예요 ☁️\n오늘 시장 날씨, 궁금한 종목, 내 지갑 상태를 물어보세요. 시세와 내 매매 기록을 보고 답해 드릴게요." };
+  list.innerHTML = [greet, ...state.chat].map((m) => `
+    <div class="msg m-${m.role}">${escapeHtml(m.text)}${m.role === "coach" && m.source ? `<small>${SRC[m.source] || ""}</small>` : ""}</div>`).join("")
+    + (state.asking ? `<div class="msg m-coach typing"></div>` : "");
+  renderChips();
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+function renderChips() {
+  const w = state.weathers[state.market];
+  const chips = ["오늘 시장 어때?"];
+  if (w) {
+    const all = w.sectors.flatMap((s) => s.stocks);
+    const big = all.sort((a, b) => Math.abs(b.change_pct) - Math.abs(a.change_pct))[0];
+    if (big) chips.push(`${big.name} 왜 ${big.change_pct >= 0 ? "올랐어" : "떨어졌어"}?`);
+  }
+  chips.push("내 지갑 어때?", "분산 투자가 뭐야?", "손절은 언제 해야 해?");
+  $("#chips").innerHTML = chips.map((c) => `<button type="button">${escapeHtml(c)}</button>`).join("");
+}
+$("#chips").addEventListener("click", (e) => {
+  if (e.target.tagName === "BUTTON") sendQuestion(e.target.textContent);
+});
+
+async function sendQuestion(q) {
+  q = (q || "").trim();
+  if (!q || state.asking) return;
+  const history = state.chat.slice(-6).map(({ role, text }) => ({ role, text: text.slice(0, 1200) }));
+  state.chat.push({ role: "user", text: q });
+  state.asking = true;
+  $("#chat-send").disabled = true;
+  renderChat();
+  try {
+    const r = await api("/api/ask", { method: "POST", body: JSON.stringify({ question: q, history }) });
+    state.chat.push({ role: "coach", text: r.text, source: r.source });
+  } catch (e) {
+    state.chat.push({ role: "coach", text: `앗, 답을 못 가져왔어요. ${e.message}` });
+  } finally {
+    state.asking = false;
+    $("#chat-send").disabled = false;
+    saveChat();
+    renderChat();
+  }
+}
+$("#chat-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const q = $("#chat-q").value;
+  $("#chat-q").value = "";
+  sendQuestion(q);
+});
+$("#chat-clear").addEventListener("click", () => { state.chat = []; saveChat(); renderChat(); });
+
+// ---------- 주간 리포트 ----------
+$("#report-btn").addEventListener("click", async () => {
+  const body = $("#report-body");
+  body.innerHTML = `<div class="rp-top"><div class="wx">☁️</div><h3>리포트를 쓰는 중…</h3><p>구름이가 이번 주 기록을 읽고 있어요</p></div>`;
+  $("#report-sheet").classList.remove("hidden");
+  try {
+    const r = await api("/api/report");
+    const st = r.stats;
+    const money = (n) => `${n > 0 ? "+" : ""}${won(n)}원`;
+    body.innerHTML = `
+      <div class="rp-top"><div class="wx">${r.weather.emoji}</div><h3>이번 주는 ${r.weather.label}</h3><p>최근 ${st.days}일 기록 · 수익률과 매매 습관을 함께 봤어요</p></div>
+      <div class="rp-grid">
+        <div><span>매매</span><b>${st.trades}번</b></div>
+        <div><span>실현 손익</span><b class="${tone(st.realized)}">${money(st.realized)}</b></div>
+        <div><span>매도 승률</span><b>${st.win_rate == null ? "-" : st.win_rate + "%"}</b></div>
+        <div><span>총 수익률</span><b class="${tone(st.return_pct)}">${sign(st.return_pct)}%</b></div>
+        <div><span>추격 매수</span><b>${st.chase_buys}번</b></div>
+        <div><span>10분 단타</span><b>${st.quick_flips}번</b></div>
+      </div>
+      <div class="rp-text">${escapeHtml(r.text)}<small>☁️ 코치 구름이 · ${SRC[r.source] || ""}</small></div>
+      <div class="rp-tags">
+        ${st.top_stocks.length ? `많이 거래한 종목: ${escapeHtml(st.top_stocks.join(", "))}<br>` : ""}
+        ${st.top_sectors.length ? `많이 거래한 업종: ${escapeHtml(st.top_sectors.join(", "))}<br>` : ""}
+        현금 비중 ${st.cash_pct}%${st.top_holding ? ` · 가장 큰 보유 ${escapeHtml(st.top_holding)} ${st.top_holding_pct}%` : ""}
+      </div>`;
+  } catch (e) {
+    body.innerHTML = `<div class="rp-top"><div class="wx">🌧️</div><h3>리포트를 못 만들었어요</h3><p>${escapeHtml(e.message)}</p></div>`;
+  }
+});
+
+// ---------- 첫 화면: 로딩 → 국내/해외 고르기 ----------
+async function boot() {
+  const t0 = Date.now();
+  await Promise.all([loadWeather("KR"), loadWeather("US"), loadPortfolio()]);
+  const wait = 1500 - (Date.now() - t0);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  for (const m of ["KR", "US"]) {
+    const i = state.weathers[m]?.indices[0];
+    if (i) {
+      $(`#pick-${m}`).textContent = `${i.name} ${i.weather.label} · ${sign(i.change_pct)}%`;
+      $(`#pickwx-${m}`).textContent = i.weather.emoji;
+    }
+  }
+  $("#splash-load").classList.add("hidden");
+  $("#splash-pick").classList.remove("hidden");
+}
+$("#splash-pick").addEventListener("click", (e) => {
+  const b = e.target.closest(".pick");
+  if (!b) return;
+  setMarket(b.dataset.m);
+  $("#splash").classList.add("out");
+  setTimeout(() => $("#splash").remove(), 500);
+});
+
+boot();
 setInterval(() => loadWeather(state.market), 60_000);

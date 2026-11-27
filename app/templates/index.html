@@ -9,6 +9,22 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <!-- 첫 화면: 로딩 → 국내/해외 고르기 -->
+  <div class="splash" id="splash">
+    <div class="splash-sky" aria-hidden="true"><span class="s-star"></span><span class="s-star"></span><span class="s-star"></span></div>
+    <div class="splash-load" id="splash-load">
+      <div class="splash-cloud"><span class="sun-peek">☀️</span><span class="cloud-big">☁️</span></div>
+      <h1>시장 날씨</h1>
+      <p>오늘의 하늘을 살펴보는 중<span class="dots"><i>.</i><i>.</i><i>.</i></span></p>
+    </div>
+    <div class="splash-pick hidden" id="splash-pick">
+      <h1>어느 하늘을 볼까요?</h1>
+      <p>나중에 화면 위 버튼으로 언제든 바꿀 수 있어요</p>
+      <button class="pick" data-m="KR"><span class="flag">🇰🇷</span><span class="pick-main"><b>국내 시장</b><small id="pick-KR">코스피 · 코스닥</small></span><span class="pick-wx" id="pickwx-KR"></span></button>
+      <button class="pick" data-m="US"><span class="flag">🇺🇸</span><span class="pick-main"><b>해외 시장</b><small id="pick-US">S&amp;P 500 · 나스닥 · 다우</small></span><span class="pick-wx" id="pickwx-US"></span></button>
+    </div>
+  </div>
+
   <main id="app">
     <!-- 오늘의 시장 날씨 -->
     <section id="view-weather" class="view active">
@@ -42,6 +58,21 @@
       <p class="fx-note" id="fx-note"></p>
     </section>
 
+    <!-- 구름이에게 질문하기 -->
+    <section id="view-chat" class="view">
+      <header class="chat-head">
+        <div class="chat-face">☁️</div>
+        <div><h2>구름이에게 물어보기</h2><p id="chat-mode">시세와 내 지갑을 보고 답해 줘요</p></div>
+        <button class="chat-clear" id="chat-clear">새 대화</button>
+      </header>
+      <div class="chat-list" id="chat-list"></div>
+      <div class="chips" id="chips"></div>
+      <form class="chat-input" id="chat-form">
+        <input id="chat-q" maxlength="300" placeholder="예) 삼성전자 왜 떨어졌어?" autocomplete="off">
+        <button type="submit" id="chat-send">보내기</button>
+      </form>
+    </section>
+
     <!-- 내 지갑 -->
     <section id="view-wallet" class="view">
       <header class="wallet-head">
@@ -53,6 +84,11 @@
           <div><span>주식</span><b id="w-stock">-</b></div>
         </div>
       </header>
+      <button class="report-card" id="report-btn">
+        <span class="rc-icon">📅</span>
+        <span class="rc-main"><b>이번 주 투자 리포트</b><small>구름이가 내 매매 습관을 돌아봐 줘요</small></span>
+        <span class="rc-go">›</span>
+      </button>
       <h2 class="section-title">보유 종목</h2>
       <div id="holdings" class="list"></div>
       <h2 class="section-title">매매 일지 <small>코치 구름이의 한마디</small></h2>
@@ -64,6 +100,7 @@
 
   <nav class="tabbar">
     <button class="tab active" data-view="weather"><span>🌤️</span>날씨</button>
+    <button class="tab" data-view="chat"><span>💬</span>구름이</button>
     <button class="tab" data-view="wallet"><span>👛</span>내 지갑</button>
   </nav>
 
@@ -101,6 +138,14 @@
       <div class="order-info" id="order-info"></div>
       <div class="order-error" id="order-error"></div>
       <button class="primary-btn" id="order-btn">주문하기</button>
+    </div>
+  </div>
+
+  <!-- 주간 리포트 시트 -->
+  <div class="sheet-wrap hidden" id="report-sheet">
+    <div class="sheet">
+      <div class="sheet-grip"></div>
+      <div id="report-body" class="report-body"></div>
     </div>
   </div>
 
