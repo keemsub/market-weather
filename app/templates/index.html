@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#5aa9e6">
+  <title>시장 날씨</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌤️</text></svg>">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main id="app">
+    <!-- 오늘의 시장 날씨 -->
+    <section id="view-weather" class="view active">
+      <header class="sky" id="sky" data-weather="cloudy">
+        <div class="sky-fx" aria-hidden="true"></div>
+        <div class="sky-top">
+          <span class="brand">시장 날씨</span>
+          <span class="updated" id="updated">불러오는 중…</span>
+        </div>
+        <div class="hero" id="hero">
+          <div class="hero-emoji">⏳</div>
+          <div class="hero-text">
+            <div class="hero-title">오늘의 시장 날씨</div>
+            <div class="hero-line">하늘을 살펴보는 중이에요</div>
+          </div>
+        </div>
+        <div class="index-row" id="indices"></div>
+      </header>
+      <div class="demo-banner hidden" id="demo-banner">
+        지금은 실제 시세를 못 가져와서 <b>연습용 시세</b>로 보여드리고 있어요.
+      </div>
+      <h2 class="section-title">업종별 예보 <small>칸을 누르면 종목이 나와요</small></h2>
+      <div class="grid" id="sectors"></div>
+      <p class="legend" id="legend"></p>
+    </section>
+
+    <!-- 내 지갑 -->
+    <section id="view-wallet" class="view">
+      <header class="wallet-head">
+        <div class="wallet-label">총자산</div>
+        <div class="wallet-total" id="w-total">-</div>
+        <div class="wallet-return" id="w-return">-</div>
+        <div class="wallet-sub">
+          <div><span>현금</span><b id="w-cash">-</b></div>
+          <div><span>주식</span><b id="w-stock">-</b></div>
+        </div>
+      </header>
+      <h2 class="section-title">보유 종목</h2>
+      <div id="holdings" class="list"></div>
+      <h2 class="section-title">매매 일지 <small>코치 구름이의 한마디</small></h2>
+      <div id="journal" class="list"></div>
+      <button class="ghost-btn" id="reset-btn">처음부터 다시 (1,000만 원으로)</button>
+      <p class="fine">모의투자예요. 실제 돈이 오가지 않고, 투자 권유가 아니에요.</p>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab active" data-view="weather"><span>🌤️</span>날씨</button>
+    <button class="tab" data-view="wallet"><span>👛</span>내 지갑</button>
+  </nav>
+
+  <!-- 업종 시트 -->
+  <div class="sheet-wrap hidden" id="sector-sheet">
+    <div class="sheet">
+      <div class="sheet-grip"></div>
+      <div class="sheet-head" id="sector-head"></div>
+      <div class="list" id="sector-stocks"></div>
+    </div>
+  </div>
+
+  <!-- 주문 시트 -->
+  <div class="sheet-wrap hidden" id="order-sheet">
+    <div class="sheet">
+      <div class="sheet-grip"></div>
+      <div class="order-head" id="order-head"></div>
+      <div class="seg">
+        <button class="seg-btn active" data-side="buy">사기</button>
+        <button class="seg-btn" data-side="sell">팔기</button>
+      </div>
+      <div class="qty-row">
+        <button class="qty-btn" data-d="-10">-10</button>
+        <button class="qty-btn" data-d="-1">-1</button>
+        <input id="qty" type="number" inputmode="numeric" min="1" value="1">
+        <button class="qty-btn" data-d="1">+1</button>
+        <button class="qty-btn" data-d="10">+10</button>
+      </div>
+      <div class="quick-row" id="quick-row">
+        <button data-frac="0.1">10%</button>
+        <button data-frac="0.25">25%</button>
+        <button data-frac="0.5">50%</button>
+        <button data-frac="1">최대</button>
+      </div>
+      <div class="order-info" id="order-info"></div>
+      <div class="order-error" id="order-error"></div>
+      <button class="primary-btn" id="order-btn">주문하기</button>
+    </div>
+  </div>
+
+  <!-- 코치 말풍선 -->
+  <div class="coach hidden" id="coach">
+    <div class="coach-face">☁️</div>
+    <div class="coach-body">
+      <div class="coach-name">코치 구름이 <small id="coach-src"></small></div>
+      <div class="coach-text" id="coach-text"></div>
+    </div>
+    <button class="coach-close" id="coach-close" aria-label="닫기">✕</button>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
