@@ -10,6 +10,7 @@ LLM 공급자를 바꾸고 싶으면 LLMClient 모양(complete 함수 하나)만
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -208,22 +209,25 @@ class LLMClient(Protocol):
 
 
 class GeminiClient:
-    """구글 Gemini (Google AI Studio 무료 키로 쓸 수 있어요)."""
+    """구글 Gemini (Google AI Studio 무료 키로 쓸 수 있어요).
+
+    구글이 모델 이름을 자주 바꿔서, 고른 모델이 없다고(404) 하면
+    내 키로 쓸 수 있는 모델 목록을 받아 가장 알맞은 flash 모델로 바꿔 다시 불러요.
+    """
 
     name = "gemini"
-    DEFAULT_MODEL = "gemini-2.5-flash"
+    DEFAULT_MODEL = "gemini-flash-latest"  # 구글이 최신 flash 모델로 이어 주는 별칭
+    BASE = "https://generativelanguage.googleapis.com/v1beta"
+    SKIP = ("image", "tts", "audio", "live", "embed", "vision", "thinking", "exp", "learnlm")
 
     def __init__(self, api_key: str, model: str = "", http: httpx.Client | None = None) -> None:
         self.api_key = api_key
-        self.model = model or self.DEFAULT_MODEL
+        self.model = (model or self.DEFAULT_MODEL).removeprefix("models/")
         self.http = http or httpx.Client(timeout=12.0)
 
-    def complete(self, system: str, user: str) -> str:
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-        )
-        r = self.http.post(
-            url,
+    def _generate(self, model: str, system: str, user: str) -> httpx.Response:
+        return self.http.post(
+            f"{self.BASE}/models/{model}:generateContent",
             headers={"x-goog-api-key": self.api_key},
             json={
                 "system_instruction": {"parts": [{"text": system}]},
@@ -231,8 +235,53 @@ class GeminiClient:
                 "generationConfig": {"temperature": 0.8, "maxOutputTokens": 2048},
             },
         )
+
+    def available_models(self) -> list[str]:
+        r = self.http.get(
+            f"{self.BASE}/models",
+            headers={"x-goog-api-key": self.api_key},
+            params={"pageSize": 1000},
+        )
         r.raise_for_status()
-        parts = r.json()["candidates"][0]["content"]["parts"]
+        return [
+            m["name"].removeprefix("models/")
+            for m in r.json().get("models", [])
+            if "generateContent" in m.get("supportedGenerationMethods", [])
+        ]
+
+    @classmethod
+    def pick_model(cls, names: list[str]) -> str | None:
+        """목록에서 고르기: flash > flash-lite, 정식 > preview, 버전 숫자가 클수록 먼저."""
+
+        def version(n: str) -> float:
+            m = re.search(r"gemini-(\d+(?:\.\d+)?)", n)
+            return float(m.group(1)) if m else 0.0
+
+        flash = [n for n in names if "flash" in n and not any(k in n for k in cls.SKIP)]
+        if not flash:
+            return None
+        flash.sort(
+            key=lambda n: (
+                n.endswith("-latest") and "lite" not in n,  # gemini-flash-latest
+                "lite" not in n,
+                "preview" not in n,
+                version(n),
+                -len(n),
+            ),
+            reverse=True,
+        )
+        return flash[0]
+
+    def complete(self, system: str, user: str) -> str:
+        r = self._generate(self.model, system, user)
+        if r.status_code == 404:
+            better = self.pick_model(self.available_models())
+            if better and better != self.model:
+                log.warning("Gemini 모델 %s 없음 → %s 로 바꿔요", self.model, better)
+                self.model = better
+                r = self._generate(self.model, system, user)
+        r.raise_for_status()
+        parts = r.json()["candidates"][0]["content"].get("parts", [])
         return "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
 
 

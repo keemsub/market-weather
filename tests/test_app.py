@@ -208,7 +208,7 @@ def test_gemini_request_shape():
 
     c = GeminiClient("k", http=httpx.Client(transport=httpx.MockTransport(handler)))
     assert c.complete("sys", "hi") == "좋아요"
-    assert "gemini-2.5-flash:generateContent" in seen["url"] and seen["key"] == "k"
+    assert "gemini-flash-latest:generateContent" in seen["url"] and seen["key"] == "k"
 
 
 def test_find_stocks():
@@ -266,3 +266,62 @@ def test_ask_rule_uses_only_this_question(client):
     assert "총자산" in r["text"]
     r = client.post("/api/ask", json={"question": "분산 투자가 뭐야?"}).json()
     assert "바구니" in r["text"]
+
+
+def test_gemini_switches_model_on_404():
+    import httpx
+
+    calls = []
+
+    def handler(req):
+        calls.append(str(req.url))
+        if req.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "models/gemini-3.0-flash-lite",
+                            "supportedGenerationMethods": ["generateContent"],
+                        },
+                        {
+                            "name": "models/gemini-3.0-flash",
+                            "supportedGenerationMethods": ["generateContent"],
+                        },
+                        {
+                            "name": "models/gemini-3.0-flash-image",
+                            "supportedGenerationMethods": ["generateContent"],
+                        },
+                        {
+                            "name": "models/gemini-3.0-pro",
+                            "supportedGenerationMethods": ["generateContent"],
+                        },
+                        {
+                            "name": "models/text-embedding-9",
+                            "supportedGenerationMethods": ["embedContent"],
+                        },
+                    ]
+                },
+            )
+        if "gemini-2.5-flash:" in str(req.url):
+            return httpx.Response(404, json={"error": {"code": 404}})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+    c = GeminiClient(
+        "k", "gemini-2.5-flash", http=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert c.complete("s", "u") == "ok"
+    assert c.model == "gemini-3.0-flash"
+    assert c.complete("s", "u") == "ok"  # 다음부터는 바뀐 모델로 바로
+    assert sum("gemini-2.5-flash:" in u for u in calls) == 1
+
+
+def test_gemini_pick_model():
+    pick = GeminiClient.pick_model
+    assert (
+        pick(["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-flash-preview-05"])
+        == "gemini-2.5-flash"
+    )
+    assert pick(["gemini-flash-latest", "gemini-9-flash"]) == "gemini-flash-latest"
+    assert pick(["gemini-2.5-flash-lite"]) == "gemini-2.5-flash-lite"
+    assert pick(["gemini-2.5-pro"]) is None
