@@ -364,4 +364,40 @@ def test_report_uses_llm_and_caches(client, monkeypatch):
         "/api/trade", json={"code": "005930", "side": "buy", "qty": 1}
     )  # 코치 한마디도 LLM 호출
     client.get("/api/report")
-    assert len(calls) == 3  # 매매가 생기면 리포트를 새로 써요
+    assert len(calls) == 2  # 매매 자체는 LLM 없이, 매매가 생기면 리포트를 새로 써요
+
+
+def test_sell_returns_cash_and_wallet_numbers(client):
+    p0 = client.get("/api/portfolio").json()
+    b = client.post("/api/trade", json={"code": "005930", "side": "buy", "qty": 10}).json()
+    price = b["trade"]["price"]
+    pb = b["portfolio"]
+    assert pb["cash"] < p0["cash"] and pb["invested"] == round(price * 10)
+    assert pb["stock_value"] == round(price * 10) and pb["unrealized"] == 0
+    s = client.post("/api/trade", json={"code": "005930", "side": "sell", "qty": 4}).json()
+    ps = s["portfolio"]
+    proceeds = price * 4 * (1 - 0.00015 - 0.0018)
+    assert abs(ps["cash"] - (pb["cash"] + proceeds)) <= 1  # 판 돈이 현금으로 들어와요
+    assert ps["holdings"][0]["qty"] == 6 and ps["invested"] == round(price * 6)
+    assert ps["realized"] == round(proceeds - price * 4)
+    # 다시 불러도 그대로 (저장됨)
+    assert abs(client.get("/api/portfolio").json()["cash"] - ps["cash"]) <= 1
+
+
+def test_trade_coach_endpoint(client, monkeypatch):
+    t = client.post("/api/trade", json={"code": "005930", "side": "buy", "qty": 1}).json()
+    assert t["coach"]["source"] == "rule"
+    tid = t["trade"]["id"]
+
+    class Fake:
+        name = "gemini"
+
+        def complete(self, system, user):
+            return "AI 한마디"
+
+    monkeypatch.setattr(main.get_coach(), "llm", Fake())
+    c = client.post(f"/api/trade/{tid}/coach").json()
+    assert c == {"text": "AI 한마디", "source": "gemini"}
+    j = client.get("/api/portfolio").json()["trades"][0]
+    assert j["coach"] == "AI 한마디"
+    assert client.post("/api/trade/9999/coach").status_code == 404

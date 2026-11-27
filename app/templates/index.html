@@ -76,13 +76,17 @@
     <!-- 내 지갑 -->
     <section id="view-wallet" class="view">
       <header class="wallet-head">
-        <div class="wallet-label">총자산</div>
+        <div class="wallet-label">총자산 <small id="w-live"></small></div>
         <div class="wallet-total" id="w-total">-</div>
         <div class="wallet-return" id="w-return">-</div>
         <div class="wallet-sub">
-          <div><span>현금</span><b id="w-cash">-</b></div>
-          <div><span>주식</span><b id="w-stock">-</b></div>
+          <div><span>현금 (주문 가능)</span><b id="w-cash">-</b></div>
+          <div><span>주식 평가금액</span><b id="w-stock">-</b></div>
+          <div><span>매입금액</span><b id="w-invested">-</b></div>
+          <div><span>평가손익</span><b id="w-unreal">-</b></div>
         </div>
+        <div class="wallet-bar" id="w-bar"><i id="w-bar-cash"></i><i id="w-bar-stock"></i></div>
+        <div class="wallet-foot"><span>■ 현금 <b id="w-cash-pct"></b></span><span>■ 주식 <b id="w-stock-pct"></b></span><span>실현손익 <b id="w-real">-</b></span></div>
       </header>
       <button class="report-card" id="report-btn">
         <span class="rc-icon">📅</span>

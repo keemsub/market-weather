@@ -50,6 +50,23 @@ def holdings_from(trades: list[Trade]) -> dict[str, Holding]:
     return h
 
 
+def realized_from(trades: list[Trade]) -> float:
+    """판 주식에서 실제로 난 손익 (매도 수수료·세금 뺀 금액 - 평균 매입가)."""
+    pos: dict[str, list[float]] = {}
+    total = 0.0
+    for t in trades:
+        q = pos.setdefault(t.code, [0, 0.0])
+        if t.side == "buy":
+            q[0] += t.qty
+            q[1] += t.qty * t.price
+        else:
+            avg = q[1] / q[0] if q[0] else t.price
+            total += t.qty * t.price * (1 - FEE_RATE - TAX_RATE) - t.qty * avg
+            q[0] -= t.qty
+            q[1] -= t.qty * avg
+    return total
+
+
 def summary(account: Account, trades: list[Trade], quotes: dict[str, Quote], start: int) -> dict:
     rows = []
     stock_value = 0.0
@@ -78,9 +95,15 @@ def summary(account: Account, trades: list[Trade], quotes: dict[str, Quote], sta
         )
     rows.sort(key=lambda r: -r["value"])
     total = account.cash + stock_value
+    invested = sum(hd.cost for hd in holdings_from(trades).values())
+    unrealized = stock_value - invested
     return {
         "cash": round(account.cash),
         "stock_value": round(stock_value),
+        "invested": round(invested),  # 지금 가진 주식을 산 금액 (매입금액)
+        "unrealized": round(unrealized),  # 평가손익
+        "unrealized_pct": round(unrealized / invested * 100, 2) if invested else 0.0,
+        "realized": round(realized_from(trades)),  # 실현손익 (판 것)
         "total": round(total),
         "start": start,
         "return_pct": round((total / start - 1) * 100, 2),
