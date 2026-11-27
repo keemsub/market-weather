@@ -232,6 +232,7 @@ $("#order-btn").addEventListener("click", async () => {
     renderWallet();
     closeSheets();
     showCoach(r.coach);
+    upgradeCoach(r.trade.id);
   } catch (e) {
     $("#order-error").textContent = e.message;
     hideCoach();
@@ -256,6 +257,20 @@ function showCoach(c) {
   $("#coach-src").textContent = SRC[c.source] || "";
 }
 function hideCoach() { $("#coach").classList.add("hidden"); }
+
+// 매매는 바로 끝내고, AI 코치 한마디는 따로 받아서 바꿔 끼워요.
+async function upgradeCoach(tradeId) {
+  if (state.portfolio?.coach_mode === "rule") return;
+  $("#coach-src").textContent = "AI가 다듬는 중…";
+  try {
+    const c = await api(`/api/trade/${tradeId}/coach`, { method: "POST" });
+    if (!$("#coach").classList.contains("hidden")) showCoach(c);
+    const t = state.portfolio?.trades.find((x) => x.id === tradeId);
+    if (t) { t.coach = c.text; t.coach_source = c.source; renderWallet(); }
+  } catch (e) {
+    $("#coach-src").textContent = SRC.rule;
+  }
+}
 $("#coach-close").addEventListener("click", hideCoach);
 
 // ---------- 지갑 ----------
@@ -272,17 +287,36 @@ function renderWallet() {
   $("#w-total").textContent = `${won(p.total)}원`;
   const diff = p.total - p.start;
   $("#w-return").textContent = `${diff >= 0 ? "+" : ""}${won(diff)}원 (${sign(p.return_pct)}%)`;
+  $("#w-return").className = `wallet-return ${tone(diff)}`;
   $("#w-cash").textContent = `${won(p.cash)}원`;
   $("#w-stock").textContent = `${won(p.stock_value)}원`;
+  $("#w-invested").textContent = `${won(p.invested)}원`;
+  $("#w-unreal").innerHTML = `<span class="${tone(p.unrealized)}">${p.unrealized > 0 ? "+" : ""}${won(p.unrealized)}원 (${sign(p.unrealized_pct)}%)</span>`;
+  $("#w-real").innerHTML = `<span class="${tone(p.realized)}">${p.realized > 0 ? "+" : ""}${won(p.realized)}원</span>`;
+  const cashPct = p.total ? (p.cash / p.total) * 100 : 100;
+  $("#w-bar-cash").style.width = `${cashPct}%`;
+  $("#w-bar-stock").style.width = `${100 - cashPct}%`;
+  $("#w-cash-pct").textContent = `${cashPct.toFixed(0)}%`;
+  $("#w-stock-pct").textContent = `${(100 - cashPct).toFixed(0)}%`;
+  const t = new Date();
+  $("#w-live").textContent = `· ${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")} 현재가 기준`;
 
   $("#holdings").innerHTML = p.holdings.length
     ? p.holdings.map((h) => `
-      <button class="item" data-code="${h.code}">
-        <div class="ic">${findQuote(h.code)?.weather.emoji || "📈"}</div>
-        <div class="main"><div class="t1">${h.market === "US" ? "🇺🇸 " : ""}${h.name}</div><div class="t2">${won(h.qty)}주 · 평균 ${won(h.avg_price)}원${h.currency === "USD" && h.native_price ? ` · 지금 ${usd(h.native_price)}` : ""}</div></div>
-        <div class="right">
-          <div class="p1">${won(h.value)}원</div>
-          <div class="p2 ${tone(h.pnl)}">${h.pnl >= 0 ? "+" : ""}${won(h.pnl)} (${sign(h.pnl_pct)}%)</div>
+      <button class="item holding" data-code="${h.code}">
+        <div class="top">
+          <div class="ic">${findQuote(h.code)?.weather.emoji || "📈"}</div>
+          <div class="main"><div class="t1">${h.market === "US" ? "🇺🇸 " : ""}${h.name}</div><div class="t2">${won(h.qty)}주 · 오늘 <span class="${tone(h.today_pct)}">${sign(h.today_pct)}%</span></div></div>
+          <div class="right">
+            <div class="p1">${won(h.value)}원</div>
+            <div class="p2 ${tone(h.pnl)}">${h.pnl > 0 ? "+" : ""}${won(h.pnl)} (${sign(h.pnl_pct)}%)</div>
+          </div>
+        </div>
+        <div class="hold-grid">
+          <span>평균 단가 <b>${won(h.avg_price)}원</b></span>
+          <span>현재가 <b>${won(h.price)}원${h.currency === "USD" && h.native_price ? ` (${usd(h.native_price)})` : ""}</b></span>
+          <span>매입금액 <b>${won(h.avg_price * h.qty)}원</b></span>
+          <span>평가금액 <b>${won(h.value)}원</b></span>
         </div>
       </button>`).join("")
     : `<div class="empty">아직 산 주식이 없어요.<br>날씨 탭에서 업종을 눌러 첫 투자를 해 보세요 🌱</div>`;
@@ -323,6 +357,7 @@ document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () 
   hideCoach();
   window.scrollTo(0, 0);
   if (b.dataset.view === "chat") renderChat();
+  if (b.dataset.view === "wallet") loadPortfolio();
 }));
 
 function closeSheets() {
@@ -451,4 +486,5 @@ $("#splash-pick").addEventListener("click", (e) => {
 });
 
 boot();
-setInterval(() => loadWeather(state.market), 60_000);
+// 1분마다 시세를 다시 받아 지갑 평가금액도 같이 바꿔요.
+setInterval(() => { loadWeather(state.market); loadPortfolio(); }, 60_000);

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.coach import Coach, find_facts, make_llm
+from app.coach import Coach, find_facts, make_llm, rule_comment
 from app.config import get_settings
 from app.db import Account, Trade, get_db
 from app.insights import ask, weekly_report
@@ -117,28 +117,51 @@ def trade(body: TradeIn, db: DB, me: Me, market: Market):
         db.rollback()
         raise HTTPException(400, str(e)) from e
 
-    history = trades_of(db, me)
-    sector = SECTOR_OF.get(body.code)
-    fc = forecast(snap, sector.market if sector else "KR")
-    sector_pct = next(
-        (s["change_pct"] for s in fc["sectors"] if sector and s["id"] == sector.id), None
-    )
-    facts = find_facts(t, history, snap["stocks"], me.cash, sector_pct)
-    before = summary(me, history, snap["stocks"], get_settings().starting_cash)
-    line = (
-        f"총자산 {before['total']:,}원 (수익률 {before['return_pct']:+.2f}%), "
-        f"현금 {before['cash']:,}원, 보유 {len(before['holdings'])}종목"
-    )
-    t.coach, t.coach_source = get_coach().comment(t, facts, line)
+    # 매매와 현금 변화는 바로 저장해요. (AI 코치를 기다리다 실패해도 매매는 남도록)
+    facts, line = _coach_inputs(t, db, me, snap)
+    t.coach, t.coach_source = rule_comment(facts), "rule"
     db.commit()
 
     data = summary(me, trades_of(db, me), snap["stocks"], get_settings().starting_cash)
+    data["coach_mode"] = get_coach().llm.name if get_coach().llm else "rule"
     return {
         "trade": {"id": t.id, "name": t.name, "side": t.side, "qty": t.qty, "price": t.price},
         "fx": snap["fx"],
         "coach": {"text": t.coach, "source": t.coach_source},
         "portfolio": data,
     }
+
+
+def _coach_inputs(t: Trade, db: Session, me: Account, snap: dict) -> tuple[list, str]:
+    history = [x for x in trades_of(db, me) if x.id <= t.id]
+    sector = SECTOR_OF.get(t.code)
+    fc = forecast(snap, sector.market if sector else "KR")
+    sector_pct = next(
+        (s["change_pct"] for s in fc["sectors"] if sector and s["id"] == sector.id), None
+    )
+    facts = find_facts(t, history, snap["stocks"], me.cash, sector_pct)
+    pf = summary(me, history, snap["stocks"], get_settings().starting_cash)
+    line = (
+        f"총자산 {pf['total']:,}원 (수익률 {pf['return_pct']:+.2f}%), "
+        f"현금 {pf['cash']:,}원, 보유 {len(pf['holdings'])}종목"
+    )
+    return facts, line
+
+
+@app.post("/api/trade/{trade_id}/coach")
+def trade_coach(trade_id: int, db: DB, me: Me, market: Market):
+    """매매 직후 AI 코치 한마디 (따로 불러서, 느려도 매매에는 영향이 없어요)."""
+    t = db.get(Trade, trade_id)
+    if t is None or t.account_id != me.id:
+        raise HTTPException(404, "매매 기록을 찾을 수 없어요.")
+    if t.coach_source != "rule" or get_coach().llm is None:
+        return {"text": t.coach, "source": t.coach_source}
+    facts, line = _coach_inputs(t, db, me, market.snapshot())
+    text, source = get_coach().comment(t, facts, line)
+    if source != "rule":
+        t.coach, t.coach_source = text, source
+        db.commit()
+    return {"text": t.coach, "source": t.coach_source}
 
 
 class ChatTurn(BaseModel):
