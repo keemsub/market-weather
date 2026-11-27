@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,8 +9,11 @@ from app.coach import Coach, GeminiClient, find_facts
 from app.db import Trade
 from app.market import (
     STOCKS,
+    US_SECTORS,
+    ChainQuotes,
     DemoQuotes,
     MarketData,
+    NaverWorldQuotes,
     Quote,
     forecast,
     parse_naver,
@@ -401,3 +405,77 @@ def test_trade_coach_endpoint(client, monkeypatch):
     j = client.get("/api/portfolio").json()["trades"][0]
     assert j["coach"] == "AI 한마디"
     assert client.post("/api/trade/9999/coach").status_code == 404
+
+
+def _naver_world_client(missing=()):
+    """가짜 네이버 해외주식 서버: AAPL은 .O, JPM은 .N, WMT는 .N이 없고 .O에만 있어요."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if "marketIndex" in path:
+            return httpx.Response(200, json={"result": {"closePrice": "1,385.50"}})
+        reuters = path.rsplit("/", 1)[-1]
+        if reuters in missing:
+            return httpx.Response(404, json={})
+        down = reuters == ".IXIC"
+        item = {
+            "closePrice": "1,234.50",
+            "compareToPreviousClosePrice": "12.30" if not down else "50.00",
+            "fluctuationsRatio": "1.01" if not down else "0.30",
+            "compareToPreviousPrice": {"code": "2" if not down else "5"},
+            "stockName": "x",
+        }
+        return httpx.Response(200, json={"datas": [item]})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_naver_world_quotes():
+    nw = NaverWorldQuotes(_naver_world_client(missing={"WMT.O"}))
+    out = nw.stocks(["AAPL", "WMT", "JPM"])
+    assert set(out) == {"AAPL", "WMT", "JPM"}  # WMT는 .N으로 다시 시도해서 받음
+    assert out["AAPL"].price == 1234.5 and out["AAPL"].currency == "USD"
+    assert out["AAPL"].name == STOCKS["AAPL"].name
+    ix = nw.indices(["^GSPC", "^IXIC"])
+    assert ix["^IXIC"].change_pct == -0.3 and ix["^GSPC"].change == 12.3
+    assert nw.fx() == 1385.5
+
+
+def test_us_chain_falls_back_and_reports_errors():
+    class Blocked:
+        name = "yahoo"
+
+        def stocks(self, codes):
+            raise RuntimeError("429 Too Many Requests")
+
+        indices = stocks
+
+        def fx(self):
+            raise RuntimeError("429")
+
+    naver_world = NaverWorldQuotes(_naver_world_client())
+    chain = ChainQuotes(Blocked(), naver_world)
+    snap = MarketData(
+        {"KR": DemoQuotes(), "US": chain}, fx_provider=[Blocked(), naver_world]
+    ).snapshot()
+    assert snap["sources"]["US"] == "naver"
+    assert snap["fx"] == {"usdkrw": 1385.5, "source": "naver"}
+    assert snap["stocks"]["AAPL"].price_krw == round(1234.5 * 1385.5, 2)
+    assert "US" not in snap["errors"]
+
+    dead = NaverWorldQuotes(
+        _naver_world_client(
+            missing=set(
+                [f"{s.code}.O" for sec in US_SECTORS for s in sec.stocks]
+                + [f"{s.code}.N" for sec in US_SECTORS for s in sec.stocks]
+            )
+        )
+    )
+    snap = MarketData({"KR": DemoQuotes(), "US": ChainQuotes(dead, Blocked())}).snapshot()
+    assert snap["sources"]["US"] == "demo"
+    assert "429" in snap["errors"]["US"] and "naver" in snap["errors"]["US"]
+
+
+def test_health_data(client):
+    body = client.get("/health/data").json()
+    assert body["sources"] == {"KR": "demo", "US": "demo"} and body["errors"] == {}

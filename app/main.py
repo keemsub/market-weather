@@ -20,9 +20,11 @@ from app.insights import ask, weekly_report
 from app.market import (
     MARKETS,
     SECTOR_OF,
+    ChainQuotes,
     DemoQuotes,
     MarketData,
     NaverQuotes,
+    NaverWorldQuotes,
     YahooQuotes,
     forecast,
 )
@@ -49,8 +51,13 @@ def get_market() -> MarketData:
     s = get_settings()
     if s.market_source == "demo":
         return MarketData({"KR": DemoQuotes(), "US": DemoQuotes()}, s.quote_cache_seconds)
-    yahoo = YahooQuotes()
-    return MarketData({"KR": NaverQuotes(), "US": yahoo}, s.quote_cache_seconds, fx_provider=yahoo)
+    # 미국: 네이버 해외주식 → 안 되면 야후 → 그래도 안 되면 연습용
+    naver_world, yahoo = NaverWorldQuotes(), YahooQuotes()
+    return MarketData(
+        {"KR": NaverQuotes(), "US": ChainQuotes(naver_world, yahoo)},
+        s.quote_cache_seconds,
+        fx_provider=[naver_world, yahoo],
+    )
 
 
 @lru_cache
@@ -84,6 +91,13 @@ def index(request: Request):
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/health/data")
+def health_data(market: Market):
+    """시세 출처 상태: 어느 시장이 연습용인지, 왜 실패했는지."""
+    snap = market.snapshot()
+    return {"sources": snap["sources"], "fx": snap["fx"], "errors": snap["errors"]}
 
 
 @app.get("/api/weather")
