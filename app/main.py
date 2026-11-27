@@ -1,5 +1,6 @@
 """서버의 시작점. `uv run uvicorn app.main:app --reload` 로 실행합니다."""
 
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -163,8 +164,18 @@ def ask_coach(body: AskIn, db: DB, me: Me, market: Market):
 def report(db: DB, me: Me, market: Market):
     snap = market.snapshot()
     trades = trades_of(db, me)
+    key = (me.id, len(trades), trades[-1].id if trades else 0)
+    cached = _report_cache.get(me.id)
+    if cached and cached[0] == key and time.monotonic() - cached[1] < 1800:
+        return cached[2]
     pf = summary(me, trades, snap["stocks"], get_settings().starting_cash)
-    return weekly_report(get_coach(), trades, pf)
+    data = weekly_report(get_coach(), trades, pf)
+    if data["source"] != "rule":  # AI 리포트는 매매가 없으면 30분 동안 재사용 (무료 한도 아끼기)
+        _report_cache[me.id] = (key, time.monotonic(), data)
+    return data
+
+
+_report_cache: dict[int, tuple[tuple, float, dict]] = {}
 
 
 @app.post("/api/reset")

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -223,7 +224,7 @@ class GeminiClient:
     def __init__(self, api_key: str, model: str = "", http: httpx.Client | None = None) -> None:
         self.api_key = api_key
         self.model = (model or self.DEFAULT_MODEL).removeprefix("models/")
-        self.http = http or httpx.Client(timeout=12.0)
+        self.http = http or httpx.Client(timeout=30.0)
 
     def _generate(self, model: str, system: str, user: str) -> httpx.Response:
         return self.http.post(
@@ -232,7 +233,7 @@ class GeminiClient:
             json={
                 "system_instruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user}]}],
-                "generationConfig": {"temperature": 0.8, "maxOutputTokens": 2048},
+                "generationConfig": {"temperature": 0.8, "maxOutputTokens": 8192},
             },
         )
 
@@ -280,9 +281,26 @@ class GeminiClient:
                 log.warning("Gemini 모델 %s 없음 → %s 로 바꿔요", self.model, better)
                 self.model = better
                 r = self._generate(self.model, system, user)
+        if r.status_code in (429, 500, 503):  # 잠깐 몰렸을 때: 한 번만 쉬었다 다시
+            time.sleep(2)
+            r = self._generate(self.model, system, user)
         r.raise_for_status()
-        parts = r.json()["candidates"][0]["content"].get("parts", [])
-        return "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
+        # 생각(thinking)에 토큰을 다 쓰거나 안전 필터에 걸리면 글이 비어 와요 → 이유를 로그로
+        return self.extract_text(r.json())
+
+    @staticmethod
+    def extract_text(data: dict) -> str:
+        cands = data.get("candidates") or []
+        if not cands:
+            reason = (data.get("promptFeedback") or {}).get("blockReason", "no candidates")
+            raise ValueError(f"Gemini 빈 응답: {reason}")
+        content = cands[0].get("content") or {}
+        text = "".join(
+            p.get("text", "") for p in content.get("parts", []) if not p.get("thought")
+        ).strip()
+        if not text:
+            raise ValueError(f"Gemini 빈 응답: {cands[0].get('finishReason', '?')}")
+        return text
 
 
 class OpenAICompatibleClient:
@@ -298,7 +316,7 @@ class OpenAICompatibleClient:
         self.api_key = api_key
         self.model = model or self.DEFAULT_MODEL
         self.base_url = (base_url or self.DEFAULT_BASE).rstrip("/")
-        self.http = http or httpx.Client(timeout=12.0)
+        self.http = http or httpx.Client(timeout=30.0)
 
     def complete(self, system: str, user: str) -> str:
         r = self.http.post(
